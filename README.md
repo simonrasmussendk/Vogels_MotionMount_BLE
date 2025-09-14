@@ -15,7 +15,6 @@ A comprehensive Home Assistant custom integration for controlling Vogels MotionM
 - **Robust Connection Management**: Exponential backoff reconnection, auto-disconnect, and connection health monitoring
 - **Advanced Configuration**: Runtime configurable logging levels and connection timeouts
 - **Comprehensive Diagnostics**: Built-in diagnostics endpoint for troubleshooting
-- **Home Assistant Best Practices**: Config flow, options flow, proper entity categories, and device grouping
 
 ## Installation
 
@@ -45,15 +44,8 @@ A comprehensive Home Assistant custom integration for controlling Vogels MotionM
 
 Before setup, ensure your Vogels MotionMount is:
 
-- Powered on and in pairing mode
-- Within Bluetooth range (typically 10 meters)
+- Within Bluetooth range
 - Not connected to another device (only one controller can connect at a time)
-
-**Factory Reset Instructions:**
-1. Power off the MotionMount
-2. Hold the reset button while powering on
-3. Default PIN after reset is `0000`
-4. The device will be discoverable for pairing
 
 ## Entities
 
@@ -87,10 +79,6 @@ Access advanced options via Settings → Devices & Services → Vogels MotionMou
 ### Connection Settings
 - **Auto-disconnect Timeout**: Automatically disconnect after inactivity (0 to disable)
 - **Bluetooth Adapter**: Change the Bluetooth adapter used for connection
-
-### Logging Settings
-- **Log Level**: Set logging verbosity (DEBUG, INFO, WARNING, ERROR)
-- **Debug Raw Data**: Enable raw telemetry payload logging (DEBUG level only)
 
 ### Advanced Settings (UUID Overrides)
 - **Nordic UART TX UUID**: Override auto-discovered telemetry characteristic
@@ -135,58 +123,6 @@ The integration provides comprehensive diagnostics via Settings → Devices & Se
 - **Slow Response**: Check Bluetooth signal strength and reduce interference
 - **Missing Entities**: Verify device validation passed during setup
 - **Permission Errors**: Ensure Home Assistant has Bluetooth permissions
-
-## Technical Details
-
-### Automatic Characteristic Discovery
-
-The integration uses intelligent auto-discovery to identify the correct GATT characteristics for your specific MotionMount model:
-
-- **Multi-Criteria Analysis**: Uses BLE properties, current values, and UUID patterns to identify characteristics
-- **Value-Based Heuristics**: Distinguishes extension vs turn targets based on their current value ranges
-- **Scoring System**: Prioritizes characteristics using multiple factors for accurate mapping
-- **Fallback Protection**: Graceful handling when characteristics can't be read during discovery
-
-### Discovered Characteristics
-
-The integration automatically finds and maps:
-
-- **Nordic UART Service TX**: Telemetry notifications (notify-only characteristic)
-- **Extension Target**: Write extension target (read+write+notify, typically higher values 0-650mm)
-- **Turn Target**: Write turn target (read+write+notify, typically lower values -90°/+90°)
-- **Preset Control**: Write preset index (write-only characteristic, excluding Nordic UART RX)
-
-### Telemetry Format
-
-The device sends ASCII telemetry via Nordic UART:
-
-```
-mount/extension/current = 50
-mount/turn/current = 75
-mount/isMoving = 1
-```
-
-### Connection Management
-
-- **Exponential Backoff**: Automatic reconnection with increasing delays
-- **Connection Health**: Heartbeat monitoring via telemetry subscription
-- **Rate Limited Logging**: Prevents log spam during connection issues
-- **Graceful Shutdown**: Clean disconnection on Home Assistant stop
-
-## Development
-
-### Code Quality
-
-The integration follows Home Assistant development standards:
-- Type hints throughout
-- Async/await patterns
-- Proper error handling
-- Comprehensive logging
-- Automatic characteristic discovery
-
-## Support
-
-For issues and feature requests, please use the GitHub repository issue tracker.
 
 ## License
 
