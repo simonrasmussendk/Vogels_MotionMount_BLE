@@ -1,0 +1,18 @@
+{
+  "domain": "vogels_motionmount",
+  "name": "Vogels MotionMount BLE",
+  "codeowners": ["@simonrasmussendk"],
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/simonrasmussendk/vogels-motionmount-ble",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "loggers": ["custom_components.vogels_motionmount"],
+  "requirements": ["bleak>=0.20.0", "bleak-retry-connector>=3.0.0"],
+  "version": "1.0.0",
+  "bluetooth": [
+    {
+      "connectable": true
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select Bluetooth Adapter",
+        "description": "Choose the Bluetooth adapter to use for connecting to your Vogels MotionMount. Found {adapter_count} adapter(s).",
+        "data": {
+          "adapter": "Bluetooth Adapter"
+        }
+      },
+      "device": {
+        "title": "Configure Vogels MotionMount",
+        "description": "Configure your Vogels MotionMount device. Using adapter: {adapter}. Found {device_count} nearby device(s).",
+        "data": {
+          "device_address": "Device Address",
+          "device_name": "Device Name"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the device. Make sure it's powered on and in range.",
+      "invalid_device": "This device doesn't appear to be a Vogels MotionMount or is missing required features.",
+      "unknown": "An unexpected error occurred during setup."
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_bluetooth_adapter": "No Bluetooth adapter found. Please ensure Bluetooth is enabled."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Vogels MotionMount Options",
+        "description": "Configure advanced options for your Vogels MotionMount.",
+        "data": {
+          "auto_disconnect_timeout": "Auto-disconnect timeout (seconds, 0 to disable)",
+          "log_level": "Logging Level",
+          "debug_raw_data": "Enable raw data debugging",
+          "uuid_nus_tx": "Nordic UART TX UUID",
+          "uuid_extension_target": "Extension Target UUID",
+          "uuid_turn_target": "Turn Target UUID",
+          "uuid_preset": "Preset UUID"
+        }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "extension_target": {
+        "name": "Extension Target"
+      },
+      "turn_target": {
+        "name": "Turn Target"
+      }
+    },
+    "sensor": {
+      "extension_current": {
+        "name": "Extension Current"
+      },
+      "turn_current": {
+        "name": "Turn Current"
+      }
+    },
+    "binary_sensor": {
+      "is_moving": {
+        "name": "Is Moving"
+      }
+    },
+    "button": {
+      "preset_0": {
+        "name": "Preset 0"
+      },
+      "preset_1": {
+        "name": "Preset 1"
+      },
+      "preset_2": {
+        "name": "Preset 2"
+      },
+      "stop": {
+        "name": "Stop"
+      }
+    }
+  }
+}
