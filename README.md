@@ -123,7 +123,3 @@ The integration provides comprehensive diagnostics via Settings → Devices & Se
 - **Slow Response**: Check Bluetooth signal strength and reduce interference
 - **Missing Entities**: Verify device validation passed during setup
 - **Permission Errors**: Ensure Home Assistant has Bluetooth permissions
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
