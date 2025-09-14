@@ -186,9 +186,20 @@ async def auto_discover_uuids(client: BleakClient, device_address: str) -> dict[
                                 candidate.get('value_int', 'unknown'), score)
                     break
         
-        # Assign preset characteristic
+        # Assign preset characteristic - look for specific UUID pattern
         if preset_candidates:
-            best_preset = preset_candidates[0]
+            # Look for the correct preset characteristic with FA2A pattern
+            best_preset = None
+            for candidate in preset_candidates:
+                uuid_lower = candidate['uuid'].lower()
+                if 'fa2a' in uuid_lower:
+                    best_preset = candidate
+                    break
+            
+            # Fallback to first candidate if FA2A not found
+            if not best_preset:
+                best_preset = preset_candidates[0]
+            
             discovered_uuids["preset"] = best_preset['uuid']
             _LOGGER.debug("Auto-discovered Preset: %s in service %s", 
                         best_preset['uuid'], best_preset['service_uuid'])
@@ -595,7 +606,7 @@ class VogelsMotionMountConnection:
                 )
                 
                 await asyncio.wait_for(
-                    self._client.write_gatt_char(uuid, data),
+                    self._client.write_gatt_char(uuid, data, response=True),
                     timeout=10.0
                 )
                 
@@ -628,8 +639,9 @@ class VogelsMotionMountConnection:
             try:
                 self._last_activity_time = time.time()
                 
-                # Pack as single byte
-                data = struct.pack("B", max(0, min(255, preset_index)))
+                # Pack as single byte per documentation: "write, 1 byte index"
+                # Use bytes([idx]) format like working script instead of struct.pack
+                data = bytes([max(0, min(255, preset_index))])
                 
                 uuid = self._uuids.get("preset")
                 if not uuid:
@@ -639,7 +651,7 @@ class VogelsMotionMountConnection:
                 self._logger.debug("Writing preset %d", preset_index)
                 
                 await asyncio.wait_for(
-                    self._client.write_gatt_char(uuid, data),
+                    self._client.write_gatt_char(uuid, data, response=True),
                     timeout=10.0
                 )
                 
