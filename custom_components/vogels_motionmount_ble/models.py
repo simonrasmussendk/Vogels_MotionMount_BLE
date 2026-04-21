@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .coordinator import VogelsMotionMountCoordinator
@@ -18,47 +18,55 @@ class VogelsMotionMountData:
 @dataclass
 class TelemetryData:
     """Telemetry data from the MotionMount."""
-    
+
     extension_current: int | None = None
     turn_current: int | None = None
+    extension_target: int | None = None
+    turn_target: int | None = None
     is_moving: bool | None = None
-    
-    def update_from_line(self, line: str) -> bool:
+
+    def update_from_line(self, line: str) -> tuple[bool, bool]:
         """Update telemetry data from a parsed line.
-        
-        Returns True if any value was updated.
+
+        Returns a tuple ``(recognized, changed)`` where ``recognized`` is
+        True if the line matched any known telemetry format and
+        ``changed`` is True if the stored value actually changed.
         """
-        updated = False
-        
-        # Parse extension current
         import re
         from .const import (
-            TELEMETRY_EXTENSION_PATTERN,
-            TELEMETRY_TURN_PATTERN,
+            TELEMETRY_EXTENSION_CURRENT_PATTERN,
+            TELEMETRY_TURN_CURRENT_PATTERN,
+            TELEMETRY_EXTENSION_TARGET_PATTERN,
+            TELEMETRY_TURN_TARGET_PATTERN,
             TELEMETRY_MOVING_PATTERN,
         )
-        
-        if match := re.search(TELEMETRY_EXTENSION_PATTERN, line):
-            new_value = int(match.group(1))
-            if self.extension_current != new_value:
-                self.extension_current = new_value
-                updated = True
-        
-        # Parse turn current
-        if match := re.search(TELEMETRY_TURN_PATTERN, line):
-            new_value = int(match.group(1))
-            if self.turn_current != new_value:
-                self.turn_current = new_value
-                updated = True
-        
-        # Parse moving state
-        if match := re.search(TELEMETRY_MOVING_PATTERN, line):
-            new_value = bool(int(match.group(1)))
-            if self.is_moving != new_value:
-                self.is_moving = new_value
-                updated = True
-        
-        return updated
+
+        # Turn values are inverted: the device reports +100 for "full left"
+        # and -100 for "full right", but we expose slider-intuitive signs
+        # (-100 = left, +100 = right) throughout the integration.
+        def _neg_int(v: str) -> int:
+            return -int(v)
+
+        # (pattern, attribute, converter)
+        fields: tuple[tuple[str, str, Any], ...] = (
+            (TELEMETRY_EXTENSION_CURRENT_PATTERN, "extension_current", int),
+            (TELEMETRY_TURN_CURRENT_PATTERN, "turn_current", _neg_int),
+            (TELEMETRY_EXTENSION_TARGET_PATTERN, "extension_target", int),
+            (TELEMETRY_TURN_TARGET_PATTERN, "turn_target", _neg_int),
+            (TELEMETRY_MOVING_PATTERN, "is_moving", lambda v: bool(int(v))),
+        )
+
+        recognized = False
+        changed = False
+        for pattern, attr, converter in fields:
+            if match := re.search(pattern, line):
+                recognized = True
+                new_value = converter(match.group(1))
+                if getattr(self, attr) != new_value:
+                    setattr(self, attr, new_value)
+                    changed = True
+
+        return recognized, changed
 
 
 @dataclass

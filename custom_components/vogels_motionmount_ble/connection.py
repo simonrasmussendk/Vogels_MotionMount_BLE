@@ -591,18 +591,28 @@ class VogelsMotionMountConnection:
             try:
                 # Update activity time
                 self._last_activity_time = time.time()
-                
-                # Pack value as uint16 little-endian
-                data = struct.pack("<H", max(0, min(100, value)))
-                
+
+                # Extension is unsigned (0 at wall .. 100 fully extended).
+                # Turn is signed. The UI uses slider-intuitive signs
+                # (-100 = left, +100 = right) but the device firmware uses
+                # the opposite convention, so we invert for the wire.
+                # Both are packed as signed int16 little-endian.
+                if characteristic == "turn_target":
+                    clamped = max(-100, min(100, int(value)))
+                    wire_value = -clamped
+                else:
+                    clamped = max(0, min(100, int(value)))
+                    wire_value = clamped
+                data = struct.pack("<h", wire_value)
+
                 uuid = self._uuids.get(characteristic)
                 if not uuid:
                     self._logger.error("Unknown characteristic: %s", characteristic)
                     return False
-                
+
                 self._logger.debug(
-                    "Writing target %d to characteristic %s (%s)",
-                    value, characteristic, uuid
+                    "Writing target %d (wire %d) to characteristic %s (%s)",
+                    clamped, wire_value, characteristic, uuid
                 )
                 
                 await asyncio.wait_for(
@@ -698,20 +708,26 @@ class VogelsMotionMountConnection:
             self._connection_stats.last_telemetry_time = time.time()
             self._last_activity_time = time.time()  # Update activity time
             
-            if self._telemetry_data.update_from_line(line):
+            recognized, changed = self._telemetry_data.update_from_line(line)
+
+            if not recognized:
+                self._logger.warning("Telemetry line did not match expected format: %s", line)
+                return
+
+            if changed:
                 self._logger.info(
-                    "Telemetry data updated: ext=%s, turn=%s, moving=%s", 
+                    "Telemetry data updated: ext=%s, turn=%s, ext_target=%s, turn_target=%s, moving=%s",
                     self._telemetry_data.extension_current,
                     self._telemetry_data.turn_current,
-                    self._telemetry_data.is_moving
+                    self._telemetry_data.extension_target,
+                    self._telemetry_data.turn_target,
+                    self._telemetry_data.is_moving,
                 )
                 if self._telemetry_callback:
                     try:
                         self._telemetry_callback(self._telemetry_data)
                     except Exception as err:
                         self._logger.error("Error in telemetry callback: %s", err)
-            else:
-                self._logger.warning("Telemetry line did not match expected format: %s", line)
                 
         except Exception as err:
             self._logger.error("Error handling telemetry data: %s", err)

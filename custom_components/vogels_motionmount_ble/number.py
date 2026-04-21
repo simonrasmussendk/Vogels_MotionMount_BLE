@@ -13,8 +13,10 @@ from .const import (
     DOMAIN,
     ENTITY_EXTENSION_TARGET,
     ENTITY_TURN_TARGET,
-    MAX_TARGET_VALUE,
-    MIN_TARGET_VALUE,
+    MAX_EXTENSION_TARGET_VALUE,
+    MAX_TURN_TARGET_VALUE,
+    MIN_EXTENSION_TARGET_VALUE,
+    MIN_TURN_TARGET_VALUE,
 )
 from .coordinator import VogelsMotionMountCoordinator
 from .entity import VogelsMotionMountEntity
@@ -27,17 +29,18 @@ NUMBER_DESCRIPTIONS: tuple[NumberEntityDescription, ...] = (
         key=ENTITY_EXTENSION_TARGET,
         name="Extension Target",
         icon="mdi:arrow-expand-horizontal",
-        native_min_value=MIN_TARGET_VALUE,
-        native_max_value=MAX_TARGET_VALUE,
+        native_min_value=MIN_EXTENSION_TARGET_VALUE,
+        native_max_value=MAX_EXTENSION_TARGET_VALUE,
         native_step=1,
         native_unit_of_measurement="%",
     ),
+    # Turn is signed: -100% = full right, 0% = centered, +100% = full left.
     NumberEntityDescription(
         key=ENTITY_TURN_TARGET,
-        name="Turn Target", 
+        name="Turn Target",
         icon="mdi:rotate-3d-variant",
-        native_min_value=MIN_TARGET_VALUE,
-        native_max_value=MAX_TARGET_VALUE,
+        native_min_value=MIN_TURN_TARGET_VALUE,
+        native_max_value=MAX_TURN_TARGET_VALUE,
         native_step=1,
         native_unit_of_measurement="%",
     ),
@@ -75,17 +78,15 @@ class VogelsMotionMountNumber(VogelsMotionMountEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current value."""
+        """Return the current target value as reported by the device."""
         if not self.coordinator.data:
             return None
-            
+
         if self.entity_description.key == ENTITY_EXTENSION_TARGET:
-            # For target entities, we don't have a "current target" from telemetry
-            # Return None to indicate unknown state
-            return None
-        elif self.entity_description.key == ENTITY_TURN_TARGET:
-            return None
-        
+            return self.coordinator.data.extension_target
+        if self.entity_description.key == ENTITY_TURN_TARGET:
+            return self.coordinator.data.turn_target
+
         return None
 
     async def async_set_native_value(self, value: float) -> None:

@@ -40,8 +40,19 @@ ENTITY_PRESET_6 = "preset_6"
 ENTITY_STOP = "stop"
 
 # Value constraints
-MIN_TARGET_VALUE: Final = 0
-MAX_TARGET_VALUE: Final = 100
+# Extension ranges from 0% (at wall) to 100% (fully extended into room).
+MIN_EXTENSION_TARGET_VALUE: Final = 0
+MAX_EXTENSION_TARGET_VALUE: Final = 100
+# Turn is signed. In the UI we use slider-intuitive signs:
+#   -100% = full left, 0% = centered (flush with wall), +100% = full right.
+# The device firmware uses the opposite sign convention, so values are
+# inverted in connection.py / models.py at the BLE boundary.
+MIN_TURN_TARGET_VALUE: Final = -100
+MAX_TURN_TARGET_VALUE: Final = 100
+
+# Kept for backward compatibility with older imports.
+MIN_TARGET_VALUE: Final = MIN_EXTENSION_TARGET_VALUE
+MAX_TARGET_VALUE: Final = MAX_EXTENSION_TARGET_VALUE
 
 # Connection settings
 CONNECTION_TIMEOUT: Final = 30.0
@@ -50,10 +61,16 @@ RECONNECT_MAX_DELAY: Final = 300.0
 RECONNECT_JITTER_MAX: Final = 5.0
 MAX_RECONNECT_ATTEMPTS: Final = 10
 
-# Telemetry parsing
-TELEMETRY_EXTENSION_PATTERN = r"mount/extension/current\s*=\s*(\d+)"
-TELEMETRY_TURN_PATTERN = r"mount/turn/current\s*=\s*(\d+)"
+# Telemetry parsing - values may be signed (turn can be negative)
+TELEMETRY_EXTENSION_CURRENT_PATTERN = r"mount/extension/current\s*=\s*(-?\d+)"
+TELEMETRY_TURN_CURRENT_PATTERN = r"mount/turn/current\s*=\s*(-?\d+)"
+TELEMETRY_EXTENSION_TARGET_PATTERN = r"mount/extension/target\s*=\s*(-?\d+)"
+TELEMETRY_TURN_TARGET_PATTERN = r"mount/turn/target\s*=\s*(-?\d+)"
 TELEMETRY_MOVING_PATTERN = r"mount/isMoving\s*=\s*([01])"
+
+# Aliases for backward compatibility
+TELEMETRY_EXTENSION_PATTERN = TELEMETRY_EXTENSION_CURRENT_PATTERN
+TELEMETRY_TURN_PATTERN = TELEMETRY_TURN_CURRENT_PATTERN
 
 # Logging
 LOGGER_NAME: Final = "custom_components.vogels_motionmount"
