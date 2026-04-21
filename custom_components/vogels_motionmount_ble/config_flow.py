@@ -149,7 +149,9 @@ class VogelsMotionMountConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> VogelsMotionMountOptionsFlow:
         """Create the options flow."""
-        return VogelsMotionMountOptionsFlow(config_entry)
+        # Home Assistant injects the config entry automatically via the
+        # OptionsFlow base class; passing it explicitly is no longer allowed.
+        return VogelsMotionMountOptionsFlow()
 
     async def _get_bluetooth_adapters(self) -> dict[str, str]:
         """Get available Bluetooth adapters."""
@@ -303,9 +305,9 @@ class VogelsMotionMountConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class VogelsMotionMountOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Vogels MotionMount BLE."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
+    # No __init__ override: Home Assistant sets ``self.config_entry``
+    # automatically on the base ``OptionsFlow``. Assigning it ourselves
+    # raises an error in current HA versions.
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
