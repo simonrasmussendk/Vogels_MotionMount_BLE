@@ -4,7 +4,7 @@
   "codeowners": ["@simonrasmussendk"],
   "config_flow": true,
   "dependencies": ["bluetooth"],
-  "documentation": "https://github.com/simonrasmussendk/vogels-motionmount-ble",
+  "documentation": "https://github.com/simonrasmussendk/Vogels_MotionMount_BLE",
   "integration_type": "device",
   "iot_class": "local_polling",
   "loggers": ["custom_components.vogels_motionmount"],
