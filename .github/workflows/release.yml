@@ -46,10 +46,13 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
+          # Use tformat: so every entry (incl. the last) ends with a newline,
+          # otherwise the closing EOF marker would be glued onto the last
+          # commit line and GITHUB_OUTPUT would reject the multiline value.
           {
-            echo 'changelog<<EOF'
-            git log --pretty=format:"- %h - %an: %s" ${{ steps.get_previous_version.outputs.previous_version }}..${{ github.ref_name }}
-            echo EOF
+            echo 'changelog<<CHANGELOG_EOF'
+            git log --pretty=tformat:"- %h - %an: %s" ${{ steps.get_previous_version.outputs.previous_version }}..${{ github.ref_name }}
+            echo CHANGELOG_EOF
           } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
