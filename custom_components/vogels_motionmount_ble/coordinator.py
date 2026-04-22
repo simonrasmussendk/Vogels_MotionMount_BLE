@@ -26,7 +26,7 @@ from .const import (
     DOMAIN,
     LOGGER_NAME,
 )
-from .models import TelemetryData
+from .models import ConnectionState, TelemetryData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,12 +60,13 @@ class VogelsMotionMountCoordinator(DataUpdateCoordinator[TelemetryData]):
             debug_raw_data=self._get_debug_raw_data(),
         )
         
-        # Set telemetry callback
+        # Set telemetry and connection-state callbacks
         self._connection.set_telemetry_callback(self._handle_telemetry_update)
-        
+        self._connection.set_state_callback(self._handle_connection_state_change)
+
         # Track if we've received initial data
         self._initial_data_received = False
-        
+
         # Periodic health check task
         self._health_check_task: asyncio.Task | None = None
 
@@ -122,7 +123,25 @@ class VogelsMotionMountCoordinator(DataUpdateCoordinator[TelemetryData]):
     async def async_shutdown(self) -> None:
         """Shutdown the coordinator."""
         _LOGGER.info("Shutting down coordinator for %s", self.device_name)
+        # Unregister callbacks first so late state changes during shutdown
+        # can't try to call into an already-disposed coordinator.
+        self._connection.set_state_callback(None)
+        self._connection.set_telemetry_callback(None)
         await self._connection.async_shutdown()
+
+    @property
+    def connection_state(self) -> ConnectionState:
+        """Return the current BLE connection state."""
+        return self._connection.connection_state
+
+    def _handle_connection_state_change(self, state: ConnectionState) -> None:
+        """Push connection-state updates out to listening entities."""
+        _LOGGER.debug(
+            "Connection state for %s changed to %s", self.device_name, state.value
+        )
+        # Trigger a refresh on every CoordinatorEntity without changing
+        # the telemetry payload.
+        self.async_update_listeners()
 
     def _handle_telemetry_update(self, telemetry_data: TelemetryData) -> None:
         """Handle telemetry data updates from the connection."""

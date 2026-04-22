@@ -1,8 +1,8 @@
 """The Vogels MotionMount BLE integration."""
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -20,40 +20,55 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
 ]
 
+# Upper bound on the time we'll wait for the coordinator/BLE stack to shut
+# down cleanly during unload or reload. Anything longer would block the
+# options flow and make Home Assistant appear to hang/crash.
+_COORDINATOR_SHUTDOWN_TIMEOUT: float = 10.0
+
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Vogels MotionMount BLE from a config entry."""
     _LOGGER.info("Setting up Vogels MotionMount BLE entry: %s", entry.title)
-    
+
     coordinator = VogelsMotionMountCoordinator(hass, entry)
-    
+
     try:
         await coordinator.async_setup()
     except Exception as err:
         _LOGGER.error("Failed to set up Vogels MotionMount BLE: %s", err)
         raise ConfigEntryNotReady from err
-    
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = VogelsMotionMountData(
         coordinator=coordinator,
     )
-    
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
+
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-    
+
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.info("Unloading Vogels MotionMount BLE entry: %s", entry.title)
-    
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         data: VogelsMotionMountData = hass.data[DOMAIN].pop(entry.entry_id)
-        await data.coordinator.async_shutdown()
-    
+        try:
+            await asyncio.wait_for(
+                data.coordinator.async_shutdown(),
+                timeout=_COORDINATOR_SHUTDOWN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "Coordinator shutdown for %s exceeded %.0fs; proceeding anyway",
+                entry.title,
+                _COORDINATOR_SHUTDOWN_TIMEOUT,
+            )
+
     return unload_ok
 
 

@@ -2,16 +2,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .coordinator import VogelsMotionMountCoordinator
 
 
+class ConnectionState(str, Enum):
+    """High-level BLE connection state exposed to entities."""
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    ERROR = "error"
+
+
 @dataclass
 class VogelsMotionMountData:
     """Data for the Vogels MotionMount BLE integration."""
-    
+
     coordinator: VogelsMotionMountCoordinator
 
 

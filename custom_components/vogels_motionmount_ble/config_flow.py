@@ -314,42 +314,57 @@ class VogelsMotionMountOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # Drop blank UUID overrides so the defaults from the initial
+            # auto-discovery (stored on config_entry.data) remain in use.
+            cleaned = {
+                key: (value.strip() if isinstance(value, str) else value)
+                for key, value in user_input.items()
+            }
+            for uuid_key in (
+                CONF_UUID_NUS_TX,
+                CONF_UUID_EXTENSION_TARGET,
+                CONF_UUID_TURN_TARGET,
+                CONF_UUID_PRESET,
+            ):
+                if cleaned.get(uuid_key) in ("", None):
+                    cleaned.pop(uuid_key, None)
+            return self.async_create_entry(title="", data=cleaned)
+
+        options = self.config_entry.options
+        data = self.config_entry.data
+
+        def _uuid_default(key: str) -> str:
+            value = options.get(key, data.get(key))
+            return value if isinstance(value, str) else ""
 
         options_schema = vol.Schema({
             vol.Optional(
                 CONF_AUTO_DISCONNECT_TIMEOUT,
-                default=self.config_entry.options.get(
+                default=options.get(
                     CONF_AUTO_DISCONNECT_TIMEOUT, DEFAULT_AUTO_DISCONNECT_TIMEOUT
-                )
+                ),
             ): vol.All(vol.Coerce(int), vol.Range(min=0, max=3600)),
             vol.Optional(
                 CONF_LOG_LEVEL,
-                default=self.config_entry.options.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL)
+                default=options.get(CONF_LOG_LEVEL, DEFAULT_LOG_LEVEL),
             ): vol.In(["DEBUG", "INFO", "WARNING", "ERROR"]),
             vol.Optional(
                 CONF_DEBUG_RAW_DATA,
-                default=self.config_entry.options.get(CONF_DEBUG_RAW_DATA, False)
+                default=options.get(CONF_DEBUG_RAW_DATA, False),
             ): bool,
             vol.Optional(
-                CONF_UUID_NUS_TX,
-                default=self.config_entry.options.get(CONF_UUID_NUS_TX, self.config_entry.data.get(CONF_UUID_NUS_TX))
+                CONF_UUID_NUS_TX, default=_uuid_default(CONF_UUID_NUS_TX)
             ): str,
             vol.Optional(
                 CONF_UUID_EXTENSION_TARGET,
-                default=self.config_entry.options.get(
-                    CONF_UUID_EXTENSION_TARGET, self.config_entry.data.get(CONF_UUID_EXTENSION_TARGET)
-                )
+                default=_uuid_default(CONF_UUID_EXTENSION_TARGET),
             ): str,
             vol.Optional(
                 CONF_UUID_TURN_TARGET,
-                default=self.config_entry.options.get(
-                    CONF_UUID_TURN_TARGET, self.config_entry.data.get(CONF_UUID_TURN_TARGET)
-                )
+                default=_uuid_default(CONF_UUID_TURN_TARGET),
             ): str,
             vol.Optional(
-                CONF_UUID_PRESET,
-                default=self.config_entry.options.get(CONF_UUID_PRESET, self.config_entry.data.get(CONF_UUID_PRESET))
+                CONF_UUID_PRESET, default=_uuid_default(CONF_UUID_PRESET)
             ): str,
         })
 

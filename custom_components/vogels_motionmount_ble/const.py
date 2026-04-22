@@ -38,6 +38,7 @@ ENTITY_PRESET_4 = "preset_4"
 ENTITY_PRESET_5 = "preset_5"
 ENTITY_PRESET_6 = "preset_6"
 ENTITY_STOP = "stop"
+ENTITY_CONNECTION_STATUS = "connection_status"
 
 # Value constraints
 # Extension ranges from 0% (at wall) to 100% (fully extended into room).

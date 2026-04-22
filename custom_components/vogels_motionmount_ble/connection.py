@@ -21,7 +21,14 @@ from .const import (
     RECONNECT_JITTER_MAX,
     RECONNECT_MAX_DELAY,
 )
-from .models import ConnectionStats, TelemetryData
+from .models import ConnectionState, ConnectionStats, TelemetryData
+
+# Maximum time we allow a BLE disconnect to take before moving on.
+# Without this bound, a stuck underlying stack can make Home Assistant's
+# "unload entry" step hang — which is what causes the options-flow crash.
+_DISCONNECT_TIMEOUT: float = 5.0
+# Maximum time we allow any single GATT write to take.
+_WRITE_TIMEOUT: float = 10.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -416,10 +423,14 @@ class VogelsMotionMountConnection:
         self._telemetry_data = TelemetryData()
         self._telemetry_callback: Callable[[TelemetryData], None] | None = None
         self._connection_stats = ConnectionStats()
-        
+
+        # Connection state (exposed to entities via a sensor)
+        self._connection_state: ConnectionState = ConnectionState.DISCONNECTED
+        self._state_callback: Callable[[ConnectionState], None] | None = None
+
         # Logging
         self._logger = RateLimitedLogger(_LOGGER)
-        
+
         # Lock for connection operations
         self._connection_lock = asyncio.Lock()
     
@@ -449,41 +460,66 @@ class VogelsMotionMountConnection:
         self._connection_stats.current_adapter = self._adapter
         return self._connection_stats
     
-    def set_telemetry_callback(self, callback: Callable[[TelemetryData], None]) -> None:
+    def set_telemetry_callback(
+        self, callback: Callable[[TelemetryData], None] | None
+    ) -> None:
         """Set callback for telemetry updates."""
         self._telemetry_callback = callback
+
+    def set_state_callback(
+        self, callback: Callable[[ConnectionState], None] | None
+    ) -> None:
+        """Set callback invoked whenever the connection state changes."""
+        self._state_callback = callback
+
+    @property
+    def connection_state(self) -> ConnectionState:
+        """Return the current high-level connection state."""
+        return self._connection_state
+
+    def _set_connection_state(self, state: ConnectionState) -> None:
+        """Update the connection state and notify listeners."""
+        if self._connection_state == state:
+            return
+        self._connection_state = state
+        if self._state_callback is not None:
+            try:
+                self._state_callback(state)
+            except Exception as err:  # pylint: disable=broad-except
+                self._logger.error("Error in connection-state callback: %s", err)
     
     async def async_connect(self) -> bool:
         """Connect to the device."""
         async with self._connection_lock:
             if self._shutdown:
                 return False
-            
+
             if self.is_connected:
+                # Make sure state is in sync with the underlying client.
+                self._set_connection_state(ConnectionState.CONNECTED)
                 return True
-            
-            if self._connecting:
-                return False
-            
+
             self._connecting = True
-            
+            self._set_connection_state(ConnectionState.CONNECTING)
+
             try:
                 self._connection_stats.connection_attempts += 1
-                
+
                 self._logger.debug(
                     "Connecting to device %s via adapter %s",
                     self._device_address,
-                    self._adapter or "default"
+                    self._adapter or "default",
                 )
-                
+
                 # Get BLE device from HA's Bluetooth integration
                 ble_device = async_ble_device_from_address(self._hass, self._device_address)
                 if not ble_device:
                     error_msg = f"Device {self._device_address} not found in Bluetooth discovery"
                     self._logger.warning(error_msg)
                     self._connection_stats.last_error = error_msg
+                    self._set_connection_state(ConnectionState.ERROR)
                     return False
-                
+
                 # Use bleak-retry-connector for reliable connection
                 self._client = await establish_connection(
                     BleakClient,
@@ -491,193 +527,249 @@ class VogelsMotionMountConnection:
                     self._device_address,
                     max_attempts=3,
                 )
-                
+
                 # Subscribe to telemetry
                 await self._subscribe_telemetry()
-                
+
                 self._connected = True
                 self._reconnect_attempts = 0
                 self._last_activity_time = time.time()
                 self._connection_stats.successful_connections += 1
                 self._connection_stats.last_error = None
-                
+                self._set_connection_state(ConnectionState.CONNECTED)
+
                 self._logger.info("Successfully connected to device %s", self._device_address)
-                
+
                 # Start auto-disconnect timer if configured
                 if self._auto_disconnect_timeout > 0:
                     self._schedule_auto_disconnect()
-                
+
                 return True
-                
+
             except asyncio.TimeoutError:
                 error_msg = f"Connection timeout to {self._device_address}"
                 self._logger.warning(error_msg)
                 self._connection_stats.last_error = error_msg
+                self._set_connection_state(ConnectionState.ERROR)
                 return False
-                
+
             except BleakError as err:
                 error_msg = f"BLE error connecting to {self._device_address}: {err}"
                 self._logger.warning(error_msg)
                 self._connection_stats.last_error = error_msg
+                self._set_connection_state(ConnectionState.ERROR)
                 return False
-                
+
             except Exception as err:
                 error_msg = f"Unexpected error connecting to {self._device_address}: {err}"
                 self._logger.error(error_msg)
                 self._connection_stats.last_error = error_msg
+                self._set_connection_state(ConnectionState.ERROR)
                 return False
-                
+
             finally:
                 self._connecting = False
     
     async def async_disconnect(self) -> None:
-        """Disconnect from the device."""
+        """Disconnect from the device.
+
+        The whole operation is bounded by ``_DISCONNECT_TIMEOUT`` so that
+        a stuck BLE stack cannot block Home Assistant's reload/unload.
+        """
         async with self._connection_lock:
-            if not self._connected or not self._client:
+            # Always cancel background timers, even if we weren't "connected".
+            if self._disconnect_task and not self._disconnect_task.done():
+                self._disconnect_task.cancel()
+                self._disconnect_task = None
+
+            if not self._client:
+                self._connected = False
+                self._set_connection_state(ConnectionState.DISCONNECTED)
                 return
-            
+
             self._logger.debug("Disconnecting from device %s", self._device_address)
-            
+
             try:
-                # Cancel auto-disconnect timer
-                if self._disconnect_task and not self._disconnect_task.done():
-                    self._disconnect_task.cancel()
-                    self._disconnect_task = None
-                
-                # Unsubscribe from notifications
                 try:
-                    if self._client.is_connected:
-                        await self._client.stop_notify(self._uuids.get("nus_tx", ""))
-                except Exception as err:
+                    await asyncio.wait_for(
+                        self._client.stop_notify(self._uuids.get("nus_tx", "")),
+                        timeout=_DISCONNECT_TIMEOUT,
+                    )
+                except (asyncio.TimeoutError, Exception) as err:
                     self._logger.debug("Error stopping notifications: %s", err)
-                
-                # Disconnect
-                await self._client.disconnect()
-                
-            except Exception as err:
-                self._logger.debug("Error during disconnect: %s", err)
+
+                try:
+                    await asyncio.wait_for(
+                        self._client.disconnect(),
+                        timeout=_DISCONNECT_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    self._logger.warning(
+                        "Disconnect from %s timed out after %.0fs; forcing state to disconnected",
+                        self._device_address,
+                        _DISCONNECT_TIMEOUT,
+                    )
+                except Exception as err:  # pylint: disable=broad-except
+                    self._logger.debug("Error during disconnect: %s", err)
             finally:
                 self._connected = False
                 self._connection_stats.disconnections += 1
+                self._set_connection_state(ConnectionState.DISCONNECTED)
                 self._logger.debug("Disconnected from device %s", self._device_address)
-    
+
     async def async_shutdown(self) -> None:
-        """Shutdown the connection manager."""
+        """Shutdown the connection manager.
+
+        Bounded so that an unresponsive BLE stack cannot keep Home
+        Assistant from unloading or reloading the config entry (which
+        is what previously caused the options flow to hang / crash HA).
+        """
         self._shutdown = True
-        
-        # Cancel reconnect task
-        if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            try:
-                await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
-        
-        # Disconnect
-        await self.async_disconnect()
+
+        for task in (self._reconnect_task, self._disconnect_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=1.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+                except Exception as err:  # pylint: disable=broad-except
+                    self._logger.debug("Error awaiting cancelled task: %s", err)
+
+        self._reconnect_task = None
+        self._disconnect_task = None
+
+        try:
+            await asyncio.wait_for(
+                self.async_disconnect(), timeout=_DISCONNECT_TIMEOUT + 1.0
+            )
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                "Shutdown disconnect for %s exceeded bounded timeout; continuing",
+                self._device_address,
+            )
+            # Force-clear state so callers see a clean disconnected status.
+            self._connected = False
+            self._client = None
+            self._set_connection_state(ConnectionState.DISCONNECTED)
     
+    async def _force_disconnect_for_retry(self) -> None:
+        """Tear down a stale client so the next attempt builds from scratch."""
+        try:
+            if self._client is not None:
+                try:
+                    await asyncio.wait_for(
+                        self._client.disconnect(), timeout=_DISCONNECT_TIMEOUT
+                    )
+                except (asyncio.TimeoutError, Exception) as err:  # pylint: disable=broad-except
+                    self._logger.debug(
+                        "Forced disconnect error for %s: %s",
+                        self._device_address,
+                        err,
+                    )
+        finally:
+            self._client = None
+            self._connected = False
+
+    async def _write_characteristic(
+        self,
+        characteristic: str,
+        data: bytes,
+        label: str,
+    ) -> bool:
+        """Ensure the connection is alive, then write to the characteristic.
+
+        Tries twice: the first attempt may fail if the cached BLE
+        connection went stale during idle — in that case we tear the
+        client down and reconnect from scratch before retrying.
+        """
+        uuid = self._uuids.get(characteristic)
+        if not uuid:
+            self._logger.error("UUID for %s not configured", characteristic)
+            return False
+
+        last_err: str | None = None
+        for attempt in range(1, 3):
+            if not self.is_connected:
+                self._logger.info(
+                    "%s: device not connected, connecting (attempt %d/2)",
+                    label,
+                    attempt,
+                )
+                if not await self.async_connect():
+                    last_err = "connect failed"
+                    continue
+
+            try:
+                self._last_activity_time = time.time()
+                self._logger.debug(
+                    "%s: writing %s (%d bytes) to %s",
+                    label,
+                    data.hex(),
+                    len(data),
+                    uuid,
+                )
+                await asyncio.wait_for(
+                    self._client.write_gatt_char(uuid, data, response=True),
+                    timeout=_WRITE_TIMEOUT,
+                )
+                return True
+            except asyncio.TimeoutError:
+                last_err = "timeout"
+                self._logger.warning(
+                    "%s: write timed out (attempt %d/2)", label, attempt
+                )
+            except BleakError as err:
+                last_err = f"BLE error: {err}"
+                self._logger.warning(
+                    "%s: BLE error on write (attempt %d/2): %s", label, attempt, err
+                )
+            except Exception as err:  # pylint: disable=broad-except
+                last_err = f"error: {err}"
+                self._logger.error(
+                    "%s: unexpected error on write (attempt %d/2): %s",
+                    label,
+                    attempt,
+                    err,
+                )
+
+            # Tear down the stale client so the next loop iteration
+            # establishes a completely fresh connection.
+            await self._force_disconnect_for_retry()
+
+        self._logger.error("%s: giving up after 2 attempts (%s)", label, last_err)
+        return False
+
     async def async_write_target(self, characteristic: str, value: int) -> bool:
         """Write a target value to a characteristic."""
-        # Try up to 3 times with reconnection
-        for attempt in range(3):
-            if not self.is_connected:
-                self._logger.info("Device disconnected, attempting reconnection (attempt %d/3)", attempt + 1)
-                if not await self.async_connect():
-                    if attempt == 2:  # Last attempt
-                        self._logger.error("Failed to reconnect after 3 attempts")
-                        return False
-                    continue
-            
-            try:
-                # Update activity time
-                self._last_activity_time = time.time()
+        # Extension is unsigned (0 at wall .. 100 fully extended).
+        # Turn is signed. The UI uses slider-intuitive signs
+        # (-100 = left, +100 = right) but the device firmware uses
+        # the opposite convention, so we invert for the wire.
+        # Both are packed as signed int16 little-endian.
+        if characteristic == "turn_target":
+            clamped = max(-100, min(100, int(value)))
+            wire_value = -clamped
+        else:
+            clamped = max(0, min(100, int(value)))
+            wire_value = clamped
+        data = struct.pack("<h", wire_value)
 
-                # Extension is unsigned (0 at wall .. 100 fully extended).
-                # Turn is signed. The UI uses slider-intuitive signs
-                # (-100 = left, +100 = right) but the device firmware uses
-                # the opposite convention, so we invert for the wire.
-                # Both are packed as signed int16 little-endian.
-                if characteristic == "turn_target":
-                    clamped = max(-100, min(100, int(value)))
-                    wire_value = -clamped
-                else:
-                    clamped = max(0, min(100, int(value)))
-                    wire_value = clamped
-                data = struct.pack("<h", wire_value)
+        return await self._write_characteristic(
+            characteristic,
+            data,
+            label=f"{characteristic}={clamped} (wire={wire_value})",
+        )
 
-                uuid = self._uuids.get(characteristic)
-                if not uuid:
-                    self._logger.error("Unknown characteristic: %s", characteristic)
-                    return False
-
-                self._logger.debug(
-                    "Writing target %d (wire %d) to characteristic %s (%s)",
-                    clamped, wire_value, characteristic, uuid
-                )
-                
-                await asyncio.wait_for(
-                    self._client.write_gatt_char(uuid, data, response=True),
-                    timeout=10.0
-                )
-                
-                return True
-                
-            except asyncio.TimeoutError:
-                self._logger.warning("Timeout writing to characteristic %s (attempt %d)", characteristic, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-            except BleakError as err:
-                self._logger.warning("BLE error writing to %s: %s (attempt %d)", characteristic, err, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-            except Exception as err:
-                self._logger.error("Unexpected error writing to %s: %s (attempt %d)", characteristic, err, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-        
-        return False
-    
     async def async_write_preset(self, preset_index: int) -> bool:
         """Write a preset index."""
-        # Try up to 3 times with reconnection
-        for attempt in range(3):
-            if not self.is_connected:
-                self._logger.info("Device disconnected, attempting reconnection for preset (attempt %d/3)", attempt + 1)
-                if not await self.async_connect():
-                    if attempt == 2:  # Last attempt
-                        self._logger.error("Failed to reconnect after 3 attempts")
-                        return False
-                    continue
-            
-            try:
-                self._last_activity_time = time.time()
-                
-                # Pack as single byte per documentation: "write, 1 byte index"
-                # Use bytes([idx]) format like working script instead of struct.pack
-                data = bytes([max(0, min(255, preset_index))])
-                
-                uuid = self._uuids.get("preset")
-                if not uuid:
-                    self._logger.error("Preset characteristic UUID not configured")
-                    return False
-                
-                self._logger.debug("Writing preset %d", preset_index)
-                
-                await asyncio.wait_for(
-                    self._client.write_gatt_char(uuid, data, response=True),
-                    timeout=10.0
-                )
-                
-                return True
-                
-            except asyncio.TimeoutError:
-                self._logger.warning("Timeout writing preset %d (attempt %d)", preset_index, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-            except BleakError as err:
-                self._logger.warning("BLE error writing preset %d: %s (attempt %d)", preset_index, err, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-            except Exception as err:
-                self._logger.error("Unexpected error writing preset %d: %s (attempt %d)", preset_index, err, attempt + 1)
-                self._connected = False  # Mark as disconnected to trigger reconnection
-        
-        return False
+        # Per device docs: single byte index.
+        data = bytes([max(0, min(255, int(preset_index)))])
+        return await self._write_characteristic(
+            "preset",
+            data,
+            label=f"preset {preset_index}",
+        )
     
     async def _subscribe_telemetry(self) -> None:
         """Subscribe to telemetry notifications."""
